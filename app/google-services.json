@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "921944394154",
+    "project_id": "a214179nabihaproject2",
+    "storage_bucket": "a214179nabihaproject2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:921944394154:android:cc02510f4ecab7d19343d3",
+        "android_client_info": {
+          "package_name": "com.example.a214179_nabiha_sirnelson_project2"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDId0i9s1ltj5Qz4D7htafUjDU0kF5WaaY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
