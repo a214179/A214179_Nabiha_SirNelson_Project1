@@ -1,4 +1,4 @@
-package com.example.a214179_nabiha_sirnelson_project1.ui.theme
+package com.example.a214179_nabiha_sirnelson_project2.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

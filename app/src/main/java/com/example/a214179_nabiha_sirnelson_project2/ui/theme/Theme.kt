@@ -1,4 +1,4 @@
-package com.example.a214179_nabiha_sirnelson_project1.ui.theme
+package com.example.a214179_nabiha_sirnelson_project2.ui.theme
 
 import android.app.Activity
 import android.os.Build
@@ -34,7 +34,7 @@ private val LightColorScheme = lightColorScheme(
 )
 
 @Composable
-fun A214179_Nabiha_SirNelson_Project1Theme(
+fun A214179_Nabiha_SirNelson_Project2Theme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     // Dynamic color is available on Android 12+
     dynamicColor: Boolean = true,

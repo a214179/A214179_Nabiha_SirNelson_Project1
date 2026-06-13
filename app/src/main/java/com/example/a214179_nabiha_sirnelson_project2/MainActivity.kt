@@ -1,11 +1,30 @@
-package com.example.a214179_nabiha_sirnelson_project1
+package com.example.a214179_nabiha_sirnelson_project2
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 import androidx.navigation.NavController
 import android.widget.Toast
+import java.util.Locale
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.text.SimpleDateFormat
+import android.app.Activity
+import android.content.Intent
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import java.util.Date
+//import androidx.compose.ui.text.intl.Locale
+import com.google.android.gms.location.LocationServices
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
+import kotlinx.coroutines.*
+import com.google.android.gms.location.FusedLocationProviderClient
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.CircleShape
@@ -13,6 +32,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.material3.CheckboxDefaults.colors
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import com.google.firebase.auth.FirebaseAuth
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.graphics.graphicsLayer
@@ -24,6 +44,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
@@ -50,12 +73,16 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.sp
-import com.example.a214179_nabiha_sirnelson_project1.ui.theme.A214179_Nabiha_SirNelson_Project1Theme
+import android.content.pm.PackageManager
+import com.example.a214179_nabiha_sirnelson_project2.ui.theme.A214179_Nabiha_SirNelson_Project2Theme
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.navigation.compose.*
 import androidx.navigation.compose.rememberNavController
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalConfiguration
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.flow.MutableStateFlow
 
 sealed class Screen(val route: String) {
     object Name : Screen("name")
@@ -63,6 +90,10 @@ sealed class Screen(val route: String) {
     object Settings : Screen("settings")
     object Profile : Screen("profile")
     object Summary : Screen("summary")
+
+    object Weather : Screen("weather")
+
+    object Achievement : Screen("achievement")
 }
 
 fun NavController.safeNavigate(route: String) {
@@ -75,21 +106,26 @@ fun NavController.safeNavigate(route: String) {
 val ScreenPadding = Modifier
     .fillMaxSize()
 
-data class WaterEntry(val time: String, val label: String, val amount: Int)
-
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
+            val auth = FirebaseAuth.getInstance()
             var darkMode by rememberSaveable { mutableStateOf(false) }
             //var userName by remember { mutableStateOf("") }
 
-            val viewModel: WaterViewModel = viewModel()
+            val context = LocalContext.current
+            val dao = DatabaseProvider.getDatabase(context).waterDao()
+            val firestore = FirebaseFirestore.getInstance()
+
+            val viewModel: WaterViewModel = viewModel(
+                factory = WaterViewModelFactory(context, firestore, auth, dao)
+            )
             val profile = viewModel.userProfile.value
 
 
-            A214179_Nabiha_SirNelson_Project1Theme(darkTheme = darkMode) {
+            A214179_Nabiha_SirNelson_Project2Theme(darkTheme = darkMode) {
 
                 val navController = rememberNavController()
 
@@ -116,7 +152,8 @@ class MainActivity : ComponentActivity() {
                             userName = profile.name,
                             darkMode = darkMode,
                             onToggleTheme = { darkMode = !darkMode },
-                            onSettings = { navController.safeNavigate(Screen.Settings.route) }
+                            onSettings = { navController.safeNavigate(Screen.Settings.route) },
+                            onGoWeather = { navController.safeNavigate(Screen.Weather.route) }
                         )
                     }
 
@@ -127,6 +164,8 @@ class MainActivity : ComponentActivity() {
                             onBack = { navController.popBackStack() },
                             onGoProfile = { navController.safeNavigate(Screen.Profile.route) },
                             onGoSummary = { navController.safeNavigate(Screen.Summary.route) },
+                            onGoAchievement = { navController.safeNavigate(Screen.Achievement.route) },
+                            onGoWeather = { navController.safeNavigate(Screen.Weather.route) },
                             age = profile.age,
                             weight = profile.weight,
                             onSaveProfile = { a, w ->
@@ -153,6 +192,18 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
+                    composable(Screen.Weather.route) {
+                        WeatherScreen(
+                            onBack = { navController.popBackStack() }
+                        )
+                    }
+
+                    composable(Screen.Achievement.route) {
+                        AchievementScreen(
+                            viewModel = viewModel,
+                            onBack = { navController.popBackStack() }
+                        )
+                    }
                 }
 
             }
@@ -168,6 +219,7 @@ fun WaterScreen(
     darkMode: Boolean,
     onToggleTheme: () -> Unit,
     onSettings: () -> Unit,
+    onGoWeather: () -> Unit,
 ) {
 
     val context = LocalContext.current
@@ -180,13 +232,21 @@ fun WaterScreen(
     var showCelebration by remember { mutableStateOf(false) }
     var alreadyCelebrated by remember { mutableStateOf(false) }
 
-    val waterLog = viewModel.waterLog.value
-    val showDialog = viewModel.showDialog.value
+    val waterLog by viewModel.waterLog.collectAsStateWithLifecycle()
 
+    val showDialog = viewModel.showDialog.value
+    val uid by viewModel.uid.collectAsStateWithLifecycle()
     var expanded by remember { mutableStateOf(true) }
 
     val currentIntake = waterLog.sumOf { it.amount }
     val remaining = (targetIntake - currentIntake).coerceAtLeast(0)
+
+    LazyColumn {
+        items(waterLog) { item ->
+            Text("${item.label} - ${item.amount}")
+        }
+    }
+
 
     val animatedProgress by animateFloatAsState(
         targetValue =
@@ -210,6 +270,7 @@ fun WaterScreen(
         }
     }
 
+
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -223,6 +284,7 @@ fun WaterScreen(
                 }
             )
         }
+
     ) { innerPadding ->
 
         Column(
@@ -258,6 +320,16 @@ fun WaterScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            Button(
+                onClick = onGoWeather,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Text("Weather & Location")
+            }
+
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -287,14 +359,15 @@ fun WaterScreen(
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))
-
                     Button(
                         onClick = { viewModel.showDialog.value = true },
+                        enabled = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Text("Add Water")
                     }
+
                 }
             }
         }
@@ -371,7 +444,9 @@ fun SettingsScreen(
     onGoSummary: () -> Unit,
     age: String,
     weight: String,
-    onSaveProfile: (String, String) -> Unit
+    onSaveProfile: (String, String) -> Unit,
+    onGoWeather: () -> Unit,
+    onGoAchievement: () -> Unit
 ) {
 
     var localAge by remember { mutableStateOf(age) }
@@ -473,6 +548,12 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
 
+            Button(
+                onClick = onGoAchievement,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Achievements")
+            }
             Button(
                 onClick = onGoProfile,
                 modifier = Modifier.fillMaxWidth()
@@ -625,10 +706,10 @@ fun NameScreen(onNext: (String) -> Unit) {
 @Composable
 fun SummaryScreen(viewModel: WaterViewModel, onBack: () -> Unit) {
 
-    val waterLog = viewModel.waterLog.value
+    val waterLog by viewModel.waterLog.collectAsStateWithLifecycle()
     val target = viewModel.calculateTargetIntake()
 
-    val total = waterLog.sumOf { it.amount }
+    val total = waterLog.sumOf { it.amount ?: 0 }
     val remaining = (target - total).coerceAtLeast(0)
 
     val progress = if (target > 0) total.toFloat() / target.toFloat() else 0f
@@ -1148,20 +1229,435 @@ fun GradientHalfCircle(progress: Float) {
         )
     }
 }
+@Composable
+fun WeatherScreen(onBack: () -> Unit) {
 
+    val context = LocalContext.current
+    val colorScheme = MaterialTheme.colorScheme
+    val isDark = isSystemInDarkTheme()
+
+    var locationText by remember { mutableStateOf("Loading location...") }
+    var weatherText by remember { mutableStateOf("Loading weather...") }
+
+    val fusedLocationClient =
+        LocationServices.getFusedLocationProviderClient(context)
+
+    LaunchedEffect(Unit) {
+
+        val permissionGranted =
+            ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+        if (permissionGranted) {
+
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+
+                if (location != null) {
+
+                    val city = getCityName(
+                        context,
+                        location.latitude,
+                        location.longitude
+                    )
+
+                    locationText = city
+
+                    CoroutineScope(Dispatchers.Main).launch {
+                        weatherText = getWeather(city.split(",")[0])
+                    }
+
+                } else {
+                    locationText = "Location unavailable"
+                }
+            }
+
+        } else {
+            locationText = "Permission not granted"
+        }
+    }
+
+    // 🌌 MUCH PRETTIER BACKGROUND
+    val backgroundColor = MaterialTheme.colorScheme.background
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(backgroundColor)
+            .padding(20.dp)
+    ) {
+
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+
+            Spacer(modifier = Modifier.height(40.dp))
+
+            Text(
+                text = "Weather",
+                fontSize = 34.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = colorScheme.onBackground
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // 🌫 LOCATION CARD (GLASS STYLE)
+            GlassCard {
+
+                WeatherCardContent(
+                    title = "Location",
+                    value = locationText
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // 🌤 WEATHER CARD (ACCENT GRADIENT)
+            GradientCard {
+
+                WeatherCardContent(
+                    title = "🌦 Weather",
+                    value = weatherText
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // 💡 TIP CARD (SOFT GLASS)
+            GlassCard {
+
+                Column(modifier = Modifier.padding(16.dp)) {
+
+                    Text(
+                        "💡 Hydration Tip",
+                        fontWeight = FontWeight.Bold,
+                        color = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text(
+                        "Drink more water when temperature is above 30°C ️",
+                        color = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            Button(
+                onClick = onBack,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text("Back")
+            }
+        }
+    }
+}
+@Composable
+fun GlassCard(content: @Composable () -> Unit) {
+
+    val isDark = isSystemInDarkTheme()
+
+    val bgColor = if (isDark) {
+        // dark glass tint
+        Color(0xFF0B1220).copy(alpha = 0.75f)
+    } else {
+        // light glass tint (NOT white!)
+        Color(0xFFEFF6FF).copy(alpha = 0.85f)
+    }
+
+    val borderColor = if (isDark) {
+        Color.White.copy(alpha = 0.08f)
+    } else {
+        Color.Black.copy(alpha = 0.06f)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(bgColor, RoundedCornerShape(24.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(24.dp))
+            .padding(16.dp)
+    ) {
+        content()
+    }
+}
+@Composable
+fun GradientCard(content: @Composable () -> Unit) {
+
+    val isDark = isSystemInDarkTheme()
+
+    val gradient = if (isDark) {
+        Brush.horizontalGradient(
+            listOf(
+                Color(0xFF1E3A8A),
+                Color(0xFF1D4ED8),
+                Color(0xFF2563EB)
+            )
+        )
+    } else {
+        Brush.horizontalGradient(
+            listOf(
+                Color(0xFF38BDF8),
+                Color(0xFF0EA5E9),
+                Color(0xFF2563EB)
+            )
+        )
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(gradient, RoundedCornerShape(24.dp))
+            .padding(16.dp)
+    ) {
+        content()
+    }
+}
+@Composable
+fun WeatherCardContent(title: String, value: String) {
+
+    val isDark = isSystemInDarkTheme()
+
+    val titleColor = if (isDark) Color(0xFFCBD5E1) else Color(0xFF475569)
+    val valueColor = if (isDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+
+        Text(title, color = titleColor, fontSize = 14.sp)
+
+        Spacer(Modifier.height(8.dp))
+
+        Text(
+            value,
+            color = valueColor,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+
+data class AchievementState(
+    val monthLabel: String,
+    val completedDays: Int,
+    val totalWater: Int,
+    val target: Int,
+    val groupedByDate: Map<String, List<WaterEntry>>
+)
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun AchievementScreen(
+    viewModel: WaterViewModel,
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val state by viewModel.getAchievementState()
+        .collectAsStateWithLifecycle(
+            initialValue = AchievementState(
+                monthLabel = "",
+                completedDays = 0,
+                totalWater = 0,
+                target = 0,
+                groupedByDate = emptyMap()
+            )
+        )
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            "Achievements",
+            fontSize = 30.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // SUMMARY CARD
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+
+            Column(modifier = Modifier.padding(24.dp)) {
+
+                Text(
+                    "🏆 ${state.monthLabel}",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 22.sp
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    "${state.completedDays}",
+                    fontSize = 42.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Text("Completed Days")
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    StatItem("Total", "${state.totalWater}mL")
+                    StatItem("Goal", "${state.target}mL")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Text("Badges", color = MaterialTheme.colorScheme.onBackground,
+            fontWeight = FontWeight.Bold)
+
+
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (state.completedDays >= 1) AchievementBadge("🥉 First Goal")
+            if (state.completedDays >= 7) AchievementBadge("🥈 7 Day Streak")
+            if (state.completedDays >= 30) AchievementBadge("🥇 Hydration Master")
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text("History", color = MaterialTheme.colorScheme.onBackground, fontWeight = FontWeight.Bold)
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        state.groupedByDate.entries
+            .sortedByDescending { it.key }
+            .forEach { day ->
+
+                val achieved = day.value.sumOf { it.amount } >= state.target
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(day.key)
+
+                        Text(
+                            if (achieved) "🏆 Achieved" else "❌ Not Met",
+                            color = if (achieved)
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // ✅ SINGLE CLEAN SHARE BUTTON
+        Button(
+            onClick = {
+                val shareText = viewModel.buildShareText(state)
+
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, shareText)
+                }
+
+                context.startActivity(
+                    Intent.createChooser(intent, "Share Achievement")
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Share Achievement")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Button(
+            onClick = onBack,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Back")
+        }
+    }
+}
+@Composable
+fun StatItem(
+    title: String,
+    value: String
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+
+        Text(
+            value,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp
+        )
+
+        Text(
+            title,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+@Composable
+fun AchievementBadge(text: String) {
+
+    val container = MaterialTheme.colorScheme.primaryContainer
+    val content = MaterialTheme.colorScheme.onPrimaryContainer
+
+    Box(
+        modifier = Modifier
+            .background(container, RoundedCornerShape(50))
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
+        Text(
+            text = text,
+            color = content,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
 
 data class Bubble(
     val x: Float,
     val radius: Float,
     val speed: Float,
     val phase: Float
-)
-data class Confetti(
-    var x: Float,
-    var y: Float,
-    val size: Float,
-    val speed: Float,
-    val color: Color
 )
 
 @Composable
@@ -1288,7 +1784,7 @@ fun CelebrationOverlay(onFinish: () -> Unit) {
         onFinish()
     }
 
-    val scale by animateFloatAsState(
+    val scale by animateFloatAsState( //bila air dah habis minom
         targetValue = 1f,
         animationSpec = spring(
             dampingRatio = 0.75f,
